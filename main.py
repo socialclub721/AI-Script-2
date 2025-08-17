@@ -32,14 +32,14 @@ class AICryptoNewsProcessor:
         self.supabase = create_client(supabase_url, supabase_key)
         self.client = OpenAI(api_key=self.openai_api_key)
         
-        # Table names - crypto_news and processed_crypto_news
-        self.raw_table = 'crypto_news'
-        self.processed_table = 'processed_crypto_news'
+        # Table names - crypto_rss_news and crypto_news_clean
+        self.raw_table = 'crypto_rss_news'
+        self.processed_table = 'crypto_news_clean'
         
         logger.info(f"Initialized with source table: {self.raw_table}")
         logger.info(f"Initialized with destination table: {self.processed_table}")
         
-        # Market impact evaluation prompt - EXACT SAME AS GENERAL NEWS
+        # Market impact evaluation prompt
         self.evaluation_prompt = """
 You are a financial news evaluation agent responsible for filtering market-moving information from noise. Your critical task is to identify only high-impact news that genuinely affects stock markets, crypto markets, or global financial conditions - everything else must be blocked.
 
@@ -97,52 +97,74 @@ Source: {source}
 """
 
         self.processing_prompt = """
-You are a crypto news processor specializing in cryptocurrency markets. Analyze this article and create:
+You are a crypto news processor that creates Watcher.guru style headlines and summaries. Analyze this article and create crypto-focused content.
 
 ORIGINAL ARTICLE:
 Headline: {headline}
 Summary: {summary}
 Source: {source}
 
-Create the following (crypto-focused and concise):
+WATCHER.GURU STYLE RULES:
+1. Start with PERSON/ORGANIZATION NAME then what they did/what happened
+2. Use NO commas or periods in headlines
+3. Add country flag emojis 🇺🇸 at START for government officials only (Presidents Treasury Secretaries Fed Chairs etc) - NOT for companies
+4. If multiple presidents/gov officials involved add multiple flags
+5. Use specific dollar amounts with $ and commas ($5900000000 or $5.9 billion)
+6. Include crypto tickers with $ prefix ($BTC $ETH $DOGE)
+7. Keep urgent breaking news tone
+8. Use "says" for quotes and "reaches" "surpasses" "files" for actions
+9. Be specific with numbers and percentages
+10. Never use prefixes like "JUST IN" or "BREAKING"
 
-1. SHORT_HEADLINE: Create a punchy, crypto-focused headline (max 15 words)
-2. SHORT_SUMMARY: Summarize the key crypto market impact (max 25 words)
-3. TICKERS: List relevant crypto tickers (BTC, ETH, BNB, SOL, etc.). Use standard symbols. If none specific, write ["CRYPTO"]
+CRYPTO EXAMPLES:
+- "🇺🇸 Treasury Secretary Bessent says US government exploring ways to acquire more Bitcoin to expand reserve"
+- "Michael Saylor says volatility is a gift to the faithful"  
+- "Grayscale files S-1 for Dogecoin $DOGE ETF"
+- "$2.57 trillion asset manager Citigroup looks to add crypto custody services"
+- "Bitcoin surpasses Google to become 5th largest asset by market cap"
+- "$420000000 liquidated from crypto market in past 20 minutes"
+- "Binance CEO says $BNB ready for institutional adoption surge"
+- "Ethereum reaches new ATH as $ETH breaks $4500 resistance"
+
+Create the following:
+
+1. SHORT_HEADLINE: Watcher.guru style headline starting with person/org name (max 120 characters no commas no periods)
+2. SHORT_SUMMARY: Key crypto impact in same style (max 180 characters no commas no periods)  
+3. TICKERS: List relevant crypto tickers (BTC ETH SOL etc). If none specific write ["CRYPTO"]
 4. SENTIMENT: Choose ONLY ONE: "BULLISH" or "BEARISH" or "NEUTRAL"
-5. MARKET_IMPACT: Explain why this is bullish/bearish/neutral for crypto markets and potential price action (max 50 words)
+5. MARKET_IMPACT: Explain crypto market implications in Watcher.guru urgent tone (max 200 characters no commas no periods)
 
-Format your response as JSON:
+Format as JSON:
 {{
     "short_headline": "...",
     "short_summary": "...",
     "tickers": ["BTC", "ETH"],
-    "sentiment": "BULLISH",
+    "sentiment": "BULLISH", 
     "market_impact": "..."
 }}
 """
 
     def fetch_unprocessed_news(self, hours_back: int = 24) -> List[Dict]:
-        """Fetch unprocessed news from crypto_news table"""
+        """Fetch unprocessed news from crypto_rss_news table"""
         try:
             cutoff_time = datetime.now() - timedelta(hours=hours_back)
             
             logger.info(f"Fetching unprocessed crypto news from {self.raw_table}")
             
             # Fetch news that hasn't been processed yet
-            # Note: crypto_news table uses 'id' not 'finnhub_id'
+            # Using correct column names: pubdate_parsed instead of datetime
             result = self.supabase.table(self.raw_table)\
                 .select('*')\
                 .eq('processed', False)\
                 .gte('ingested_at', cutoff_time.isoformat())\
-                .order('datetime', desc=True)\
+                .order('pubdate_parsed', desc=True)\
                 .limit(50)\
                 .execute()
             
             if result.data:
                 logger.info(f"Fetched {len(result.data)} unprocessed crypto items from {self.raw_table}")
-                # Sort by datetime
-                result.data.sort(key=lambda x: x.get('datetime', 0), reverse=True)
+                # Sort by pubdate_parsed
+                result.data.sort(key=lambda x: x.get('pubdate_parsed', ''), reverse=True)
                 return result.data
             else:
                 logger.info("No unprocessed crypto news found")
@@ -156,9 +178,9 @@ Format your response as JSON:
         """Evaluate if crypto news is market-moving using AI"""
         try:
             prompt = self.evaluation_prompt.format(
-                headline=news_item.get('headline', ''),
-                summary=news_item.get('summary', ''),
-                source=news_item.get('source', '')
+                headline=news_item.get('title', ''),  # Changed from 'headline' to 'title'
+                summary=news_item.get('description', ''),   # Use description field
+                source=news_item.get('author', '')    # Changed from 'source' to 'author'
             )
             
             response = self.client.chat.completions.create(
@@ -175,10 +197,10 @@ Format your response as JSON:
             
             # Parse response
             if result.startswith("PASS"):
-                logger.info(f"✅ PASSED: {news_item.get('headline', '')[:50]}...")
+                logger.info(f"✅ PASSED: {news_item.get('title', '')[:50]}...")
                 return True, result
             else:
-                logger.info(f"❌ BLOCKED: {news_item.get('headline', '')[:50]}...")
+                logger.info(f"❌ BLOCKED: {news_item.get('title', '')[:50]}...")
                 return False, result
                 
         except Exception as e:
@@ -189,9 +211,9 @@ Format your response as JSON:
         """Process passed crypto news to extract structured information"""
         try:
             prompt = self.processing_prompt.format(
-                headline=news_item.get('headline', ''),
-                summary=news_item.get('summary', ''),
-                source=news_item.get('source', '')
+                headline=news_item.get('title', ''),  # Changed from 'headline' to 'title'
+                summary=news_item.get('description', ''),   # Use description field
+                source=news_item.get('author', '')    # Changed from 'source' to 'author'
             )
             
             response = self.client.chat.completions.create(
@@ -230,9 +252,9 @@ Format your response as JSON:
             return False
 
     def mark_as_processed(self, news_item: Dict) -> bool:
-        """Mark original news item as processed in crypto_news table"""
+        """Mark original news item as processed in crypto_rss_news table"""
         try:
-            # crypto_news table uses 'id' field
+            # Use id for crypto_rss_news table
             id_value = news_item.get('id')
             
             if not id_value:
@@ -266,17 +288,17 @@ Format your response as JSON:
             if not processed:
                 return False
             
-            # Step 3: Prepare data for storage
+            # Step 3: Prepare data for storage (updated field mappings)
             final_data = {
-                'original_id': str(news_item.get('id')),
-                'original_headline': news_item.get('headline', ''),
-                'original_url': news_item.get('url', ''),
-                'short_headline': processed['short_headline'][:100],  # Enforce limits
-                'short_summary': processed['short_summary'][:150],
+                'original_id': str(news_item.get('id')),  # Use id from crypto_rss_news
+                'original_headline': news_item.get('title', ''),  # Changed from headline to title
+                'original_url': news_item.get('link', ''),  # Changed from url to link
+                'short_headline': processed['short_headline'][:120],  # Enforce limits
+                'short_summary': processed['short_summary'][:180],
                 'tickers': processed['tickers'] if isinstance(processed['tickers'], list) else [],
                 'sentiment': processed['sentiment'],
                 'market_impact': processed['market_impact'],
-                'original_datetime': news_item.get('datetime'),  # crypto_news uses 'datetime' not 'datetime_unix'
+                'original_datetime': None,  # RSS doesn't have unix timestamp, could use pubdate_parsed if needed
                 'evaluation_reason': reason,
                 'processed_at': datetime.now().isoformat()
             }
@@ -311,7 +333,7 @@ Format your response as JSON:
             
             for i, news_item in enumerate(unprocessed[:batch_size], 1):
                 logger.info(f"\n🪙 Processing {i}/{min(batch_size, len(unprocessed))}")
-                logger.info(f"   Headline: {news_item.get('headline', '')[:80]}...")
+                logger.info(f"   Title: {news_item.get('title', '')[:80]}...")
                 
                 if self.process_single_news(news_item):
                     passed_count += 1
