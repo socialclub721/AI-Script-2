@@ -39,54 +39,76 @@ class AICryptoNewsProcessor:
         logger.info(f"Initialized with source table: {self.raw_table}")
         logger.info(f"Initialized with destination table: {self.processed_table}")
         
-        # Market impact evaluation prompt
+        # Updated crypto-focused evaluation prompt - MUCH LESS RESTRICTIVE
         self.evaluation_prompt = """
-You are a financial news evaluation agent responsible for filtering market-moving information from noise. Your critical task is to identify only high-impact news that genuinely affects stock markets, crypto markets, or global financial conditions - everything else must be blocked.
+You are a crypto and blockchain news filter. Your job is to identify news that could be relevant to crypto investors, traders, blockchain professionals, or anyone following digital assets and DeFi.
 
-PASS if news matches ANY:
+PASS news that covers:
 
-Critical Events:
-- War outbreak, military escalation, geopolitical crisis
-- Fed/Central bank decisions (rates, QE, Powell statements)
-- Market crash >3% major indices
-- Bank collapse/bailout (systemically important)
-- Regulatory shocks (bans, new crypto/stock laws)
-+ other critical events that might move markets instantly
+**Cryptocurrency & Tokens:**
+- Any crypto price movements (>2% for major coins, >5% for altcoins)
+- New token launches, airdrops, or listings
+- Market cap milestones or ranking changes
+- Trading volume spikes or unusual activity
+- Whale movements or large transactions
 
-Market Movers:
-- Stock movement >10% (large cap) or >20% (mid cap)
-- Earnings surprise >20% (S&P500 companies)
-- M&A deals >$10B
-- Insider trading >$100M
-- Warren Buffett/Berkshire positions
-+ other big asset managements moving stuff
+**Blockchain & Technology:**
+- Protocol updates, hard forks, network upgrades
+- Smart contract developments
+- Layer 2 solutions and scaling news
+- Cross-chain bridges and interoperability
+- Consensus mechanism changes
 
-Crypto:
-- BTC & ETH movement >5% (24h)
-- Top 10 crypto new ATH
-- Institutional adoption >$1B AUM
-- Liquidations >$500M
-- Major exchange/protocol hack
-- ETF approval/rejection
-+ other major crypto news
+**DeFi & Applications:**
+- DEX volumes, new protocols, yield farming
+- Lending/borrowing platform updates
+- NFT marketplace developments
+- Gaming and metaverse projects
+- Web3 infrastructure news
 
-Money Flows:
-- Trillion dollar manager moves (BlackRock, Vanguard)
-- Sector rotation >$10B
-- DXY movement >1%
-- Treasury yield change >10bps
-- Commodity shock (Oil >5%, Gold >3%)
-+ other major money flows
+**Institutional & Adoption:**
+- Corporate crypto adoption (any size company)
+- Investment fund movements or announcements
+- Bank partnerships with crypto companies
+- Government digital currency developments
+- Traditional finance entering crypto
 
-BLOCK:
-- Entertainment/pop culture
-- Small product launches
-- Opinion pieces
-- Micro-cap earnings (<$1B mcap)
-- Non C-level personnel news
-- Technical analysis
-- Repeated/old news
-+ unnecessary stuff that won't move markets and is consumer/normie based
+**Regulatory & Legal:**
+- Crypto regulations worldwide
+- Court decisions affecting crypto
+- Government policy on digital assets
+- Tax implications and guidance
+- Compliance developments
+
+**Exchanges & Platforms:**
+- Exchange listings, delistings, updates
+- Custody solutions and security news
+- Trading platform developments
+- Wallet and infrastructure updates
+- Security incidents or improvements
+
+**Market Infrastructure:**
+- ETF developments and approvals
+- Derivatives and futures markets
+- Stablecoin news and developments
+- Mining industry updates
+- Energy consumption discussions
+
+**Innovation & Trends:**
+- AI integration with blockchain
+- Environmental crypto initiatives
+- Social tokens and creator economy
+- Decentralized identity solutions
+- New consensus mechanisms
+
+BLOCK only clearly irrelevant content:
+- Pure traditional finance (unless crypto connection)
+- General technology news (unless blockchain related)
+- Entertainment without crypto/NFT angle
+- Sports (unless crypto sponsorship/payments)
+- Weather or unrelated current events
+
+When in doubt about crypto relevance, PASS the news. It's better to include potentially relevant crypto content than to miss important developments.
 
 Analyze this news and respond with ONLY "PASS" or "BLOCK" followed by a brief reason.
 
@@ -144,35 +166,82 @@ Format as JSON:
 }}
 """
 
-    def fetch_unprocessed_news(self, hours_back: int = 24) -> List[Dict]:
-        """Fetch unprocessed news from crypto_rss_news table"""
+    def fetch_latest_news(self) -> List[Dict]:
+        """Fetch latest 20 articles from crypto_rss_news, regardless of processed status"""
         try:
-            cutoff_time = datetime.now() - timedelta(hours=hours_back)
+            logger.info(f"Fetching latest 20 crypto articles from {self.raw_table}")
             
-            logger.info(f"Fetching unprocessed crypto news from {self.raw_table}")
-            
-            # Fetch news that hasn't been processed yet
-            # Using correct column names: pubdate_parsed instead of datetime
+            # Get latest 20 articles ordered by ingested_at (most recent first)
             result = self.supabase.table(self.raw_table)\
                 .select('*')\
-                .eq('processed', False)\
-                .gte('ingested_at', cutoff_time.isoformat())\
-                .order('pubdate_parsed', desc=True)\
-                .limit(50)\
+                .order('ingested_at', desc=True)\
+                .limit(20)\
                 .execute()
             
             if result.data:
-                logger.info(f"Fetched {len(result.data)} unprocessed crypto items from {self.raw_table}")
-                # Sort by pubdate_parsed
-                result.data.sort(key=lambda x: x.get('pubdate_parsed', ''), reverse=True)
+                logger.info(f"Fetched {len(result.data)} latest crypto articles from {self.raw_table}")
                 return result.data
             else:
-                logger.info("No unprocessed crypto news found")
+                logger.info("No crypto articles found")
                 return []
                 
         except Exception as e:
             logger.error(f"Error fetching from {self.raw_table}: {e}")
             return []
+
+    def is_already_processed(self, news_item: Dict) -> bool:
+        """Check if this crypto article is already processed by checking the clean table"""
+        try:
+            original_id = str(news_item.get('id'))
+            if not original_id:
+                return False
+                
+            result = self.supabase.table(self.processed_table)\
+                .select('original_id')\
+                .eq('original_id', original_id)\
+                .execute()
+            
+            return len(result.data) > 0
+            
+        except Exception as e:
+            logger.error(f"Error checking if crypto news processed: {e}")
+            return False
+
+    def maintain_table_size_limit(self):
+        """Keep only 100 articles in crypto_news_clean, remove oldest when limit exceeded"""
+        try:
+            # Count current articles
+            count_result = self.supabase.table(self.processed_table)\
+                .select('id', count='exact')\
+                .execute()
+            
+            current_count = count_result.count
+            logger.info(f"Current crypto articles in {self.processed_table}: {current_count}")
+            
+            if current_count >= 100:
+                # Get oldest articles to delete (keep newest 99, so next insert makes it 100)
+                articles_to_delete = current_count - 99
+                
+                oldest_articles = self.supabase.table(self.processed_table)\
+                    .select('id')\
+                    .order('processed_at', desc=False)\
+                    .limit(articles_to_delete)\
+                    .execute()
+                
+                if oldest_articles.data:
+                    # Delete the oldest articles
+                    ids_to_delete = [article['id'] for article in oldest_articles.data]
+                    
+                    for article_id in ids_to_delete:
+                        self.supabase.table(self.processed_table)\
+                            .delete()\
+                            .eq('id', article_id)\
+                            .execute()
+                    
+                    logger.info(f"🧹 Removed {len(ids_to_delete)} oldest crypto articles to maintain 100 article limit")
+                
+        except Exception as e:
+            logger.error(f"Error maintaining crypto table size limit: {e}")
 
     def evaluate_news_importance(self, news_item: Dict) -> Tuple[bool, str]:
         """Evaluate if crypto news is market-moving using AI"""
@@ -186,7 +255,7 @@ Format as JSON:
             response = self.client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are a crypto news evaluator. Respond with PASS or BLOCK and a brief reason."},
+                    {"role": "system", "content": "You are a crypto and blockchain news evaluator. When in doubt, PASS the news. Respond with PASS or BLOCK and a brief reason."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3,
@@ -242,8 +311,12 @@ Format as JSON:
             return None
 
     def store_processed_news(self, processed_data: Dict) -> bool:
-        """Store processed crypto news in the clean Supabase table"""
+        """Store processed crypto news in the clean Supabase table with size management"""
         try:
+            # First maintain the 100 article limit
+            self.maintain_table_size_limit()
+            
+            # Then insert the new article
             result = self.supabase.table(self.processed_table).insert(processed_data).execute()
             logger.info(f"✅ Stored processed crypto news: {processed_data['short_headline']}")
             return True
@@ -275,7 +348,12 @@ Format as JSON:
     def process_single_news(self, news_item: Dict) -> bool:
         """Process a single crypto news item through the entire pipeline"""
         try:
-            # Step 1: Evaluate importance
+            # Step 1: Check if already processed (skip duplicates)
+            if self.is_already_processed(news_item):
+                logger.info(f"⏭️  Already processed: {news_item.get('title', '')[:50]}...")
+                return False
+            
+            # Step 2: Evaluate importance
             is_important, reason = self.evaluate_news_importance(news_item)
             
             if not is_important:
@@ -283,12 +361,12 @@ Format as JSON:
                 self.mark_as_processed(news_item)
                 return False
             
-            # Step 2: Process content with AI
+            # Step 3: Process content with AI
             processed = self.process_news_content(news_item)
             if not processed:
                 return False
             
-            # Step 3: Prepare data for storage (updated field mappings)
+            # Step 4: Prepare data for storage (updated field mappings)
             final_data = {
                 'original_id': str(news_item.get('id')),  # Use id from crypto_rss_news
                 'original_headline': news_item.get('title', ''),  # Changed from headline to title
@@ -303,9 +381,9 @@ Format as JSON:
                 'processed_at': datetime.now().isoformat()
             }
             
-            # Step 4: Store in processed table
+            # Step 5: Store in processed table (with automatic size management)
             if self.store_processed_news(final_data):
-                # Step 5: Mark original as processed
+                # Step 6: Mark original as processed
                 self.mark_as_processed(news_item)
                 return True
             
@@ -315,25 +393,32 @@ Format as JSON:
             logger.error(f"Error processing single crypto news: {e}")
             return False
 
-    def run(self, batch_size: int = 10):
+    def run(self, batch_size: int = 20):
         """Run the AI crypto processing pipeline"""
         try:
             logger.info("🪙 Starting AI Crypto News Processing Pipeline...")
             
-            # Fetch unprocessed news
-            unprocessed = self.fetch_unprocessed_news(hours_back=24)
+            # Fetch latest 20 crypto articles (regardless of processed status)
+            latest_articles = self.fetch_latest_news()
             
-            if not unprocessed:
-                logger.info("No unprocessed crypto news found")
+            if not latest_articles:
+                logger.info("No crypto articles found")
                 return True
             
-            # Process in batches
+            # Process all articles
             processed_count = 0
             passed_count = 0
+            skipped_count = 0
             
-            for i, news_item in enumerate(unprocessed[:batch_size], 1):
-                logger.info(f"\n🪙 Processing {i}/{min(batch_size, len(unprocessed))}")
+            for i, news_item in enumerate(latest_articles, 1):
+                logger.info(f"\n🪙 Processing {i}/{len(latest_articles)}")
                 logger.info(f"   Title: {news_item.get('title', '')[:80]}...")
+                
+                # Check if already processed first
+                if self.is_already_processed(news_item):
+                    skipped_count += 1
+                    logger.info(f"⏭️  Skipped (already processed)")
+                    continue
                 
                 if self.process_single_news(news_item):
                     passed_count += 1
@@ -344,9 +429,11 @@ Format as JSON:
                 time.sleep(1)
             
             logger.info(f"\n✅ Crypto processing complete!")
-            logger.info(f"   Processed: {processed_count} articles")
-            logger.info(f"   Passed filter: {passed_count} articles")
-            logger.info(f"   Blocked: {processed_count - passed_count} articles")
+            logger.info(f"   Total articles: {len(latest_articles)}")
+            logger.info(f"   Already processed (skipped): {skipped_count}")
+            logger.info(f"   Newly processed: {processed_count}")
+            logger.info(f"   Passed filter: {passed_count}")
+            logger.info(f"   Blocked: {processed_count - passed_count}")
             
             return True
             
@@ -365,7 +452,7 @@ def main():
     
     # Check for run mode
     run_mode = os.getenv('RUN_MODE', 'continuous').lower()
-    batch_size = int(os.getenv('BATCH_SIZE', '10'))
+    batch_size = int(os.getenv('BATCH_SIZE', '20'))  # Changed default to 20
     
     # Initialize processor
     try:
@@ -376,7 +463,7 @@ def main():
         logger.error("- OPENAI_API_KEY")
         logger.error("- SUPABASE_URL")
         logger.error("- SUPABASE_KEY")
-        logger.error("- BATCH_SIZE (default: 10)")
+        logger.error("- BATCH_SIZE (default: 20)")
         exit(1)
     
     # Run once mode
