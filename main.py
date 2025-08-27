@@ -169,27 +169,27 @@ IMPORTANT: If the description is missing, identical to the headline, or too brie
 
 WATCHER.GURU CRYPTO STYLE RULES:
 1. Start with PERSON/ORGANIZATION/CRYPTO NAME then action
-2. Use NO commas or periods in headlines EXCEPT in dollar amounts
+2. Use NO commas or periods in headlines EXCEPT in dollar amounts where they are REQUIRED
 3. Add 🇺🇸 flags ONLY for government officials (SEC Chair, Treasury Secretary)
-4. MONEY FORMATTING:
-   - Under $1 million: Use exact amounts with commas: $750,000 (NOT $750k)
-   - $1 million and above: Use words: $2.5 million, $1.3 billion
-   - Commas in dollar amounts are THE ONLY exception to the no-comma rule
+4. CRITICAL MONEY FORMATTING - MUST FOLLOW:
+   - Under $1 million: ALWAYS use commas in thousands: $373,000 NOT $373000
+   - Examples: $5,000 | $50,000 | $500,000 | $999,999
+   - $1 million and above: Use words: $1.5 million, $2 billion
+   - NEVER write amounts under $1M without commas ($373000 is WRONG)
 5. ALWAYS include crypto tickers with $ prefix ($BTC $ETH $SOL)
 6. Include percentages for price movements
 7. Use urgent crypto trading tone
 8. Specific verbs: "pumps" "dumps" "surges" "crashes" "moons" "bleeds"
 
-CRYPTO HEADLINE EXAMPLES:
+CRYPTO HEADLINE EXAMPLES (NOTE THE COMMAS IN AMOUNTS):
 - "Bitcoin $BTC surges 8% to break $45,000 resistance as ETF approval nears"
 - "Vitalik Buterin burns $500,000 worth of memecoins sent to his wallet"
 - "🇺🇸 SEC Chair Gensler says most cryptocurrencies are securities"
 - "Binance sees $2.1 billion in withdrawals following CEO resignation"
-- "Ethereum $ETH gas fees drop 90% after Dencun upgrade activation"
-- "Michael Saylor's MicroStrategy buys 12,333 Bitcoin $BTC for $347 million"
 - "Solo miner strikes gold with $373,000 Bitcoin $BTC block beating millions of competitors"
+- "Crypto whale moves $825,000 worth of Ethereum $ETH to cold storage"
+- "DeFi protocol loses $95,000 in flash loan attack on Polygon network"
 - "$420 million liquidated from crypto market as Bitcoin $BTC drops below $40,000"
-- "Crypto trader loses $850,000 in failed leverage position on Binance"
 
 CRITICAL CRYPTO TICKER EXTRACTION:
 Extract ALL crypto tickers mentioned by name or symbol (max 5, most important):
@@ -416,7 +416,7 @@ Create the following JSON:
             response = self.client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are a crypto news processor. Extract ALL crypto tickers from names (Bitcoin→BTC). Money formatting: under $1M use commas ($750,000), over $1M use words ($1.5 million). Commas ONLY allowed in dollar amounts, nowhere else. Always respond with valid JSON."},
+                    {"role": "system", "content": "You are a crypto news processor. CRITICAL: For amounts under $1 million, ALWAYS use commas for thousands ($373,000 NOT $373000). For amounts over $1M use words ($1.5 million). Extract ALL tickers (Bitcoin→BTC). No commas except in dollar amounts where they're REQUIRED. Always valid JSON."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3,
