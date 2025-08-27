@@ -169,11 +169,12 @@ IMPORTANT: If the description is missing, identical to the headline, or too brie
 
 WATCHER.GURU CRYPTO STYLE RULES:
 1. Start with PERSON/ORGANIZATION/CRYPTO NAME then action
-2. Use NO commas or periods in headlines
+2. Use NO commas or periods in headlines EXCEPT in dollar amounts
 3. Add 🇺🇸 flags ONLY for government officials (SEC Chair, Treasury Secretary)
 4. MONEY FORMATTING:
    - Under $1 million: Use exact amounts with commas: $750,000 (NOT $750k)
    - $1 million and above: Use words: $2.5 million, $1.3 billion
+   - Commas in dollar amounts are THE ONLY exception to the no-comma rule
 5. ALWAYS include crypto tickers with $ prefix ($BTC $ETH $SOL)
 6. Include percentages for price movements
 7. Use urgent crypto trading tone
@@ -185,9 +186,10 @@ CRYPTO HEADLINE EXAMPLES:
 - "🇺🇸 SEC Chair Gensler says most cryptocurrencies are securities"
 - "Binance sees $2.1 billion in withdrawals following CEO resignation"
 - "Ethereum $ETH gas fees drop 90% after Dencun upgrade activation"
-- "Michael Saylor's MicroStrategy buys additional 12,333 Bitcoin $BTC for $347 million"
-- "Solana $SOL network suffers fifth outage this year lasting 7 hours"
+- "Michael Saylor's MicroStrategy buys 12,333 Bitcoin $BTC for $347 million"
+- "Solo miner strikes gold with $373,000 Bitcoin $BTC block beating millions of competitors"
 - "$420 million liquidated from crypto market as Bitcoin $BTC drops below $40,000"
+- "Crypto trader loses $850,000 in failed leverage position on Binance"
 
 CRITICAL CRYPTO TICKER EXTRACTION:
 Extract ALL crypto tickers mentioned by name or symbol (max 5, most important):
@@ -240,8 +242,8 @@ If the article mentions specific numbers, extract them:
 Create the following JSON:
 
 {{
-    "processed_headline": "Watcher.guru crypto headline (max 120 chars, no commas/periods)",
-    "processed_description": "Crypto-focused description (max 180 chars, no commas/periods)",
+    "processed_headline": "Watcher.guru crypto headline (max 120 chars, commas ONLY in dollar amounts)",
+    "processed_description": "Crypto-focused description (max 180 chars, commas ONLY in dollar amounts)",
     "tickers": ["BTC", "ETH", etc.] max 5 tickers - NEVER empty, NEVER ["CRYPTO"],
     "sentiment": "BULLISH" or "BEARISH" or "NEUTRAL",
     "market_impact": "Crypto market implications (max 200 chars)",
@@ -276,18 +278,48 @@ Create the following JSON:
             return []
 
     def is_already_processed(self, news_item: Dict) -> bool:
-        """Check if this crypto article is already processed"""
+        """Check if this crypto article is already processed using multiple checks"""
         try:
+            # Check by link first
             original_link = news_item.get('link')
-            if not original_link:
-                return False
+            if original_link:
+                result = self.supabase.table(self.processed_table)\
+                    .select('id')\
+                    .eq('original_link', original_link)\
+                    .execute()
                 
-            result = self.supabase.table(self.processed_table)\
-                .select('original_link')\
-                .eq('original_link', original_link)\
-                .execute()
+                if len(result.data) > 0:
+                    return True
             
-            return len(result.data) > 0
+            # Also check by headline to avoid duplicates with different IDs
+            original_headline = news_item.get('headline', '')
+            if original_headline:
+                # Check if same headline was processed in last 24 hours
+                from datetime import datetime, timedelta
+                cutoff_time = (datetime.now() - timedelta(hours=24)).isoformat()
+                
+                result = self.supabase.table(self.processed_table)\
+                    .select('id')\
+                    .eq('original_headline', original_headline)\
+                    .gte('processed_at', cutoff_time)\
+                    .execute()
+                
+                if len(result.data) > 0:
+                    logger.info(f"   Found duplicate headline processed within 24 hours")
+                    return True
+            
+            # Also check by original_id if it exists
+            original_id = news_item.get('id')
+            if original_id:
+                result = self.supabase.table(self.processed_table)\
+                    .select('id')\
+                    .eq('original_id', str(original_id))\
+                    .execute()
+                
+                if len(result.data) > 0:
+                    return True
+                    
+            return False
             
         except Exception as e:
             logger.error(f"Error checking if crypto news processed: {e}")
@@ -384,7 +416,7 @@ Create the following JSON:
             response = self.client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are a crypto news processor. Extract ALL crypto tickers from names (Bitcoin→BTC). Money: under $1M use commas ($750,000), over $1M use words ($1.5 million). Always respond with valid JSON."},
+                    {"role": "system", "content": "You are a crypto news processor. Extract ALL crypto tickers from names (Bitcoin→BTC). Money formatting: under $1M use commas ($750,000), over $1M use words ($1.5 million). Commas ONLY allowed in dollar amounts, nowhere else. Always respond with valid JSON."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3,
