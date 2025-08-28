@@ -39,110 +39,68 @@ class AICryptoNewsProcessor:
         logger.info(f"Initialized with source table: {self.raw_table}")
         logger.info(f"Initialized with destination table: {self.processed_table}")
         
-        # Crypto-focused evaluation prompt
+        # STRICT crypto market-moving evaluation prompt
         self.evaluation_prompt = """
-You are a crypto and blockchain news filter specializing in cryptocurrency content. Your job is to identify news specifically about crypto, blockchain, DeFi, and digital assets.
+You are a STRICT crypto news filter. Only PASS news that will cause IMMEDIATE crypto market movements or represents CRITICAL events in crypto/blockchain.
 
-ALWAYS PASS news about:
+PASS ONLY these HIGH-IMPACT crypto events:
 
-**Cryptocurrency Price & Markets:**
-- ANY crypto price movements (even <1% for major coins)
-- Market cap changes or milestones
-- Trading volume spikes or unusual activity
-- Technical analysis levels (support/resistance)
-- Whale movements or large transactions
-- Liquidations and margin calls
-- Exchange inflows/outflows
+**TIER 1 - ALWAYS PASS (Immediate market impact):**
+- Bitcoin/Ethereum moves >8% in 24h
+- Major altcoins (top 20) moves >15% in 24h
+- Flash crashes or circuit breaker events on major exchanges
+- Exchange hacks/collapses (>$50M stolen or exchange shutdown)
+- Major stablecoin depegs (>3% from $1)
+- Bitcoin/Ethereum ETF approvals or rejections
+- Countries officially banning or adopting crypto as legal tender
+- SEC lawsuits against major exchanges (Binance, Coinbase, Kraken)
+- Bitcoin halving events (actual event, not speculation)
+- Major protocol exploits >$50M
 
-**Specific Cryptocurrencies (ALWAYS PASS):**
-- Bitcoin (BTC) - any mention
-- Ethereum (ETH) - any mention
-- Major altcoins (SOL, ADA, AVAX, DOT, MATIC, etc.)
-- Memecoins (DOGE, SHIB, PEPE) if significant movement
-- Stablecoins (USDT, USDC, DAI) developments
+**TIER 2 - SIGNIFICANT EVENTS:**
+- Whale movements >$100M in single transaction
+- Major liquidation events >$500M across market
+- Binance/Coinbase listing of new major tokens (top 50 market cap)
+- Federal Reserve or ECB statements specifically about crypto
+- Major corporate crypto purchases >$100M (Tesla, MicroStrategy scale)
+- Critical network outages (Ethereum, Solana down for hours)
+- DeFi protocol hacks >$10M
+- Major mining difficulty adjustments >10%
 
-**DeFi & Protocols:**
-- DEX volumes and liquidity changes
-- Yield farming and staking updates
-- Lending/borrowing protocol news
-- Protocol hacks or exploits
-- TVL (Total Value Locked) changes
-- New protocol launches
-- Governance proposals and votes
+**BLOCK EVERYTHING ELSE including:**
+- Small price moves (<8% BTC, <15% major alts)
+- Technical analysis and price predictions
+- Opinion pieces and market commentary
+- Minor exchange listings or delistings
+- Wallet updates, minor protocol upgrades
+- NFT collection news (unless >$10M hack/rug)
+- Individual trader stories (unless >$10M loss/gain)
+- Mining profitability discussions
+- General blockchain education content
+- Partnerships and collaborations
+- Roadmap updates and announcements
+- Airdrops and token distributions
+- Most governance proposals
+- Layer 2 updates (unless major failure)
+- Crypto influencer statements
+- Most regulatory "discussions" or "considerations"
+- Small DeFi protocol launches
+- Staking APY changes
+- Trading volume reports (unless historic records)
 
-**NFTs & Gaming:**
-- Major NFT collection news
-- NFT marketplace updates
-- Blockchain gaming developments
-- Metaverse projects
-- Play-to-earn economies
-
-**Blockchain Technology:**
-- Network upgrades and hard forks
-- Layer 2 developments (Arbitrum, Optimism, Polygon)
-- Smart contract innovations
-- Consensus mechanism changes
-- Cross-chain bridges
-- Zero-knowledge proofs
-- Scalability solutions
-
-**Mining & Infrastructure:**
-- Hash rate changes
-- Mining difficulty adjustments
-- Mining profitability
-- Energy usage debates
-- Mining bans or regulations
-- ASIC developments
-
-**Institutional Crypto:**
-- Corporate Bitcoin/crypto purchases
-- Crypto ETF news and approvals
-- Traditional finance crypto adoption
-- Payment companies crypto integration
-- Crypto custody solutions
-- Institutional trading platforms
-
-**Regulation & Legal:**
-- Crypto-specific regulations
-- SEC actions on crypto
-- Crypto tax policies
-- Exchange licenses
-- Stablecoin regulations
-- CBDC developments
-
-**Crypto Exchanges:**
-- New listing announcements
-- Exchange volumes
-- Security incidents
-- Platform updates
-- Withdrawal/deposit issues
-- Trading pair additions
-
-**Web3 & Emerging:**
-- DAO developments
-- Social tokens
-- Decentralized identity
-- Blockchain + AI integration
-- RWA (Real World Assets) tokenization
-
-BLOCK news that is:
-- General finance without crypto angle
-- Traditional stock market only
-- General technology without blockchain
-- Macro economics without crypto impact
-- Political news without crypto connection
-
-Also provide detailed metadata about the crypto relevance.
+CRITICAL: Be EXTREMELY selective. When in doubt, BLOCK.
+We only want news that makes crypto traders immediately change positions.
+If it won't move BTC by >1% or major alts by >3%, it's probably not important enough.
 
 Analyze this crypto news and respond with JSON:
 {{
     "decision": "PASS" or "BLOCK",
-    "reason": "Brief explanation",
+    "reason": "Why this will/won't move crypto markets immediately",
     "relevance_score": 0.0 to 1.0,
-    "categories": ["DeFi", "Bitcoin", "Ethereum", "NFT", "Regulation", etc.],
-    "importance": "HIGH", "MEDIUM", or "LOW",
+    "categories": ["Crash", "Hack", "Regulation", "ETF", "Whale", etc.],
+    "importance": "CRITICAL", "HIGH", or "MEDIUM",
     "mentioned_cryptos": ["BTC", "ETH", etc.],
-    "mentioned_blockchains": ["Ethereum", "Solana", etc.]
+    "expected_market_impact": "percentage estimate if applicable"
 }}
 
 CRYPTO NEWS:
@@ -151,9 +109,9 @@ Description: {description}
 Source: {source}
 """
 
-        # Crypto-specific processing prompt
+        # Crypto-specific processing prompt (unchanged but with emphasis on urgency)
         self.processing_prompt = """
-You are a crypto news processor that creates Watcher.guru style headlines for cryptocurrency news. Analyze this crypto article and create focused content.
+You are a crypto news processor that creates Watcher.guru style headlines for HIGH-IMPACT cryptocurrency news. Analyze this crypto article and create urgent, market-focused content.
 
 ORIGINAL CRYPTO ARTICLE:
 Headline: {headline}
@@ -182,14 +140,14 @@ WATCHER.GURU CRYPTO STYLE RULES:
 8. Specific verbs: "pumps" "dumps" "surges" "crashes" "moons" "bleeds"
 
 CRYPTO HEADLINE EXAMPLES (NOTE THE COMMAS IN AMOUNTS):
-- "Bitcoin $BTC surges 8% to break $45,000 resistance as ETF approval nears"
-- "Vitalik Buterin burns $500,000 worth of memecoins sent to his wallet"
-- "🇺🇸 SEC Chair Gensler says most cryptocurrencies are securities"
-- "Binance sees $2.1 billion in withdrawals following CEO resignation"
-- "Solo miner strikes gold with $373,000 Bitcoin $BTC block beating millions of competitors"
-- "Crypto whale moves $825,000 worth of Ethereum $ETH to cold storage"
-- "DeFi protocol loses $95,000 in flash loan attack on Polygon network"
-- "$420 million liquidated from crypto market as Bitcoin $BTC drops below $40,000"
+- "Bitcoin $BTC crashes 12% to $38,000 triggering $1.2 billion in liquidations"
+- "Binance hacked for $570,000 worth of Bitcoin $BTC in hot wallet breach"
+- "🇺🇸 SEC approves first Bitcoin $BTC spot ETF after decade of rejections"
+- "Ethereum $ETH whale moves $125 million to exchanges signaling potential sell-off"
+- "MicroStrategy purchases additional $650,000 worth of Bitcoin $BTC at $42,000"
+- "Solana $SOL network down for 8 hours causing $2.3 million in liquidations"
+- "Terra Luna $LUNA crashes 99% in 24 hours wiping out $60 billion market cap"
+- "🇺🇸 Federal Reserve Chair says crypto poses systemic risk to financial stability"
 
 CRITICAL CRYPTO TICKER EXTRACTION:
 Extract ALL crypto tickers mentioned by name or symbol (max 5, most important):
@@ -359,7 +317,7 @@ Create the following JSON:
             logger.error(f"Error maintaining crypto table size limit: {e}")
 
     def evaluate_crypto_relevance(self, news_item: Dict) -> Tuple[bool, Dict]:
-        """Evaluate if news is crypto-specific"""
+        """Evaluate if news is high-impact crypto news using STRICT criteria"""
         try:
             description = news_item.get('description', '')
             headline = news_item.get('headline', '')
@@ -376,7 +334,7 @@ Create the following JSON:
             response = self.client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are a crypto news evaluator. Focus on crypto/blockchain content. Respond with valid JSON."},
+                    {"role": "system", "content": "You are a STRICT crypto news evaluator. Only pass HIGH-IMPACT market-moving crypto events. Be extremely selective. Respond with valid JSON."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3,
@@ -387,10 +345,10 @@ Create the following JSON:
             result = json.loads(response.choices[0].message.content)
             
             if result.get('decision') == "PASS":
-                logger.info(f"✅ CRYPTO PASSED (score: {result.get('relevance_score', 0):.2f}): {headline[:50]}...")
+                logger.info(f"✅ HIGH-IMPACT CRYPTO (score: {result.get('relevance_score', 0):.2f}): {headline[:50]}...")
                 return True, result
             else:
-                logger.info(f"❌ BLOCKED (not crypto): {headline[:50]}...")
+                logger.info(f"❌ BLOCKED (not impactful): {headline[:50]}...")
                 return False, result
                 
         except Exception as e:
@@ -495,7 +453,7 @@ Create the following JSON:
                 'importance_level': evaluation_data.get('importance', 'MEDIUM'),
                 
                 # Blockchain/protocol data
-                'blockchain_mentioned': evaluation_data.get('mentioned_blockchains', []),
+                'blockchain_mentioned': evaluation_data.get('mentioned_cryptos', []),
                 'defi_protocol': [],  # Could be enhanced to extract DeFi protocols
                 
                 # Numeric values (if provided by AI)
@@ -506,12 +464,12 @@ Create the following JSON:
                 
                 # Processing metadata
                 'processed_at': datetime.now().isoformat(),
-                'processing_version': '1.0'
+                'processing_version': '1.1'  # Updated version with strict filter
             }
             
             # Insert into database
             result = self.supabase.table(self.processed_table).insert(final_data).execute()
-            logger.info(f"✅ Stored crypto news: {processed_data['processed_headline'][:60]}...")
+            logger.info(f"✅ Stored high-impact crypto news: {processed_data['processed_headline'][:60]}...")
             return True
             
         except Exception as e:
@@ -526,7 +484,7 @@ Create the following JSON:
                 logger.info(f"⏭️  Already processed: {news_item.get('headline', '')[:50]}...")
                 return False
             
-            # Evaluate crypto relevance
+            # Evaluate crypto relevance with STRICT criteria
             is_relevant, evaluation_data = self.evaluate_crypto_relevance(news_item)
             
             if not is_relevant:
@@ -551,6 +509,7 @@ Create the following JSON:
         """Run the crypto news processing pipeline"""
         try:
             logger.info("🪙 Starting AI Crypto News Processing Pipeline...")
+            logger.info("🎯 STRICT MODE: Only high-impact market-moving crypto events")
             
             # Fetch latest crypto articles
             latest_articles = self.fetch_latest_crypto_news()
@@ -587,8 +546,8 @@ Create the following JSON:
             logger.info(f"   Total crypto articles: {len(latest_articles)}")
             logger.info(f"   Already processed: {skipped_count}")
             logger.info(f"   Newly processed: {processed_count}")
-            logger.info(f"   Passed crypto filter: {passed_count}")
-            logger.info(f"   Blocked (not crypto): {processed_count - passed_count}")
+            logger.info(f"   Passed strict filter: {passed_count}")
+            logger.info(f"   Blocked (not impactful): {processed_count - passed_count}")
             
             return True
             
@@ -600,8 +559,9 @@ Create the following JSON:
 def main():
     """Main function - runs continuously every minute"""
     logger.info("=" * 60)
-    logger.info("🪙 AI Crypto News Processing Service")
-    logger.info("₿ Specialized for cryptocurrency and blockchain news")
+    logger.info("🪙 AI Crypto News Processing Service v1.1")
+    logger.info("🎯 STRICT FILTER: Only High-Impact Market-Moving Events")
+    logger.info("₿ Focus: >8% BTC moves, major hacks, ETF news, crashes")
     logger.info("📰 Processing from: crypto_news_articles table")
     logger.info("✨ Storing to: crypto_clean_articles table")
     logger.info("⚡ Updates every 60 seconds")
